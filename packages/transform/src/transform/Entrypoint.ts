@@ -313,6 +313,15 @@ export class Entrypoint extends BaseEntrypoint {
     deferOnlySupersede: (entrypoint, only) =>
       entrypoint.deferOnlySupersede(only),
     failInvalidation: (entrypoint, error) => entrypoint.failInvalidation(error),
+    getActiveSource: (publication) => {
+      const source = evaluatedSources.get(publication);
+      return source &&
+        source.actionsCache.size > 0 &&
+        !source.#supersededWith &&
+        !source.invalidationError
+        ? source
+        : null;
+    },
     instantiate: (init: EntrypointInit) => {
       const {
         dependencies = new Map(),
