@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 
 import { TransformCacheCollection } from '../cache';
+import { disposeEvalBroker } from '../eval/broker';
 import { transform } from '../transform';
 
 const processorFile = path.resolve(
@@ -170,6 +171,7 @@ const runColdBuild = async (seed: number) => {
 
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   } finally {
+    disposeEvalBroker(cache);
     fs.rmSync(root, { recursive: true, force: true });
   }
 
