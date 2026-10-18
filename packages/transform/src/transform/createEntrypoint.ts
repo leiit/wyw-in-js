@@ -409,6 +409,9 @@ function innerCreateEntrypoint(
   // transform uses that source, a request the source covers is served by the
   // source, as before the copy was published. A new entrypoint would replace
   // the copy without a link to the source and abort the source's transform.
+  // A request that closes an import cycle through the source keeps the previous
+  // behavior: its `loop` status would publish the source in place of the copy
+  // that the evals which published it still expect.
   if (reusableEvaluatedState && cached === expectedCached) {
     const source = factory.getActiveSource(cached);
     if (
