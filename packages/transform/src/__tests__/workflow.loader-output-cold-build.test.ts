@@ -14,7 +14,8 @@ const processorFile = path.resolve(
 const COMPONENTS = 30;
 const STORIES = 20;
 const CONCURRENCY = 16;
-const SEED = 9;
+// Each seed builds a different graph and queue order.
+const SEEDS = [9, 12, 18, 26, 31, 35];
 
 const createRandom = (seed: number) => {
   let state = seed;
@@ -110,8 +111,8 @@ const shuffle = <T>(items: T[], random: () => number) => {
 // no particular order and every module arrives with its loader output. No file
 // changes on disk during the build, so nothing is stale and every transform
 // has to finish.
-it('finishes every module of a cold build when a loader appends code to the components', async () => {
-  const random = createRandom(SEED);
+const runColdBuild = async (seed: number) => {
+  const random = createRandom(seed);
   const { files, loaded } = createModules(random);
   const queue = shuffle(Object.keys(files), random);
 
@@ -173,4 +174,10 @@ it('finishes every module of a cold build when a loader appends code to the comp
   }
 
   expect(failures).toEqual([]);
-}, 120000);
+};
+
+it.each(SEEDS)(
+  'finishes every module of a cold build when a loader appends code to the components (seed %i)',
+  runColdBuild,
+  120000
+);

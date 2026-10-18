@@ -741,4 +741,77 @@ describe('createEntrypoint', () => {
     expect(rootEntrypoint.loadedAndParsed).toBe(evaluated.loadedAndParsed);
     expect(rootEntrypoint.transformedCode).toBeNull();
   });
+
+  describe('evaluated copy of a source in a running transform', () => {
+    const name = '/foo/in-flight.js';
+    const code = 'export const a = 1; export const b = () => a;';
+
+    // The root waits for its own evaluation while another eval loads it as a
+    // dependency and publishes an evaluated copy with the exports it could
+    // serialize: the function `b` is not one of them.
+    const startWithEvaluatedCopy = () => {
+      const source = createEntrypoint(
+        services,
+        name,
+        ['__wywPreval', 'a', 'b'],
+        code
+      );
+      const actionContext = createActionContext();
+      source.createAction('workflow', undefined, null, actionContext);
+      const evaluated = source.createEvaluated();
+      evaluated.evaluatedOnly.splice(0, evaluated.evaluatedOnly.length, 'a');
+      services.cache.add('entrypoints', name, evaluated);
+
+      return { actionContext, evaluated, source };
+    };
+
+    it('serves a request the copy cannot answer from the source', () => {
+      const { evaluated, source } = startWithEvaluatedCopy();
+
+      const dependency = Entrypoint.createRoot(services, name, ['b'], code);
+      const root = createEntrypoint(services, name, ['__wywPreval'], code);
+
+      expect(dependency).toBe(source);
+      expect(root).toBe(source);
+      expect(services.cache.get('entrypoints', name)).toBe(evaluated);
+      expect(source.supersededWith).toBeNull();
+      expect(source.isPublishedAs(evaluated)).toBe(true);
+    });
+
+    it('replaces the copy once the transform of its source has finished', () => {
+      const { actionContext, evaluated, source } = startWithEvaluatedCopy();
+      disposeActionContext(actionContext);
+
+      const dependency = Entrypoint.createRoot(services, name, ['b'], code);
+
+      expect(dependency).not.toBe(source);
+      expect(services.cache.get('entrypoints', name)).toBe(dependency);
+      expect(dependency.loadedAndParsed).toBe(evaluated.loadedAndParsed);
+    });
+
+    it('replaces the copy for a request the source does not cover', () => {
+      const { source } = startWithEvaluatedCopy();
+
+      const wider = createEntrypoint(services, name, ['c'], code);
+
+      expect(wider).not.toBe(source);
+      expect(wider.only).toEqual(['__wywPreval', 'a', 'b', 'c']);
+      expect(services.cache.get('entrypoints', name)).toBe(wider);
+    });
+
+    it('does not let the source stand for its copy once the code changes', () => {
+      const { source } = startWithEvaluatedCopy();
+
+      const edited = createEntrypoint(
+        services,
+        name,
+        ['__wywPreval'],
+        'export const a = 2; export const b = () => a;'
+      );
+
+      expect(edited).not.toBe(source);
+      expect(services.cache.get('entrypoints', name)).toBe(edited);
+      expect(source.isPublishedAs(edited)).toBe(false);
+    });
+  });
 });
