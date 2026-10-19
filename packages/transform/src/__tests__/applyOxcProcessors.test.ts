@@ -1033,6 +1033,38 @@ describe('applyOxcProcessors', () => {
     });
   });
 
+  it('does not require snapshot replay for bindings declared inside an interpolation function', () => {
+    const result = applyOxcProcessors(
+      `
+        import { styled } from '@linaria/react';
+
+        const sizes = { normal: { radius: '50%' }, wide: { radius: 13 } };
+
+        export const Box = styled.div\`
+          border-radius: \${({ size }) => {
+            const { radius } = sizes[size];
+            return typeof radius === 'string' ? radius : \`\${radius}px\`;
+          }};
+        \`;
+      `,
+      fileContext,
+      {
+        displayName: false,
+        extensions: ['.js', '.ts', '.tsx'],
+        tagResolver: (source, imported) => {
+          if (source === '@linaria/react' && imported === 'styled') {
+            return linariaStyledProcessorPath;
+          }
+
+          return null;
+        },
+      },
+      () => {}
+    );
+
+    expect(result.processors).toHaveLength(1);
+  });
+
   it('keeps helper declarations that remain referenced by surviving runtime dependency chains', () => {
     const result = applyOxcProcessors(
       `
