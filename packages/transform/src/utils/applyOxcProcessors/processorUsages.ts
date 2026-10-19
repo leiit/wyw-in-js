@@ -6,6 +6,9 @@ import type {
   Program,
 } from 'oxc-parser';
 
+import { resolveBindingInIndex } from '../collectOxcTemplateDependencies/bindingResolution';
+import { analyzeProgram } from '../collectOxcTemplateDependencies/scopeAnalysis';
+import type { BindingIndex } from '../collectOxcTemplateDependencies/types';
 import { getOxcNodeChildren } from '../oxc/ast';
 import type {
   CallExpressionLike,
@@ -89,7 +92,25 @@ export const getQualifiedName = (node: Expression): string | null => {
   return null;
 };
 
-export const resolveDefinedProcessor = (
+// A parameter or local variable can shadow the imported processor name
+const isShadowedByLocalBinding = (
+  callee: Expression,
+  getBindingIndex: (() => BindingIndex) | undefined
+): boolean => {
+  const root = getRootIdentifier(callee);
+  if (!root || !getBindingIndex) {
+    return false;
+  }
+
+  const binding = resolveBindingInIndex(
+    getBindingIndex(),
+    root.name,
+    root.start
+  );
+  return binding !== undefined && !binding.isRoot && binding.kind !== 'import';
+};
+
+const matchDefinedProcessor = (
   callee: Expression,
   definedProcessors: Map<string, DefinedProcessor>
 ): {
@@ -118,6 +139,20 @@ export const resolveDefinedProcessor = (
         collapseQualifiedCallee: false,
         definedProcessor,
       }
+    : null;
+};
+
+export const resolveDefinedProcessor = (
+  callee: Expression,
+  definedProcessors: Map<string, DefinedProcessor>,
+  getBindingIndex?: () => BindingIndex
+): {
+  collapseQualifiedCallee: boolean;
+  definedProcessor: DefinedProcessor;
+} | null => {
+  const resolved = matchDefinedProcessor(callee, definedProcessors);
+  return resolved && !isShadowedByLocalBinding(callee, getBindingIndex)
+    ? resolved
     : null;
 };
 
@@ -158,6 +193,11 @@ export const collectProcessorUsages = (
   definedProcessors: Map<string, DefinedProcessor>
 ): ProcessorUsage[] => {
   const usages: ProcessorUsage[] = [];
+  let bindingIndex: BindingIndex | undefined;
+  const getBindingIndex = () => {
+    bindingIndex ??= analyzeProgram(program).bindingIndex;
+    return bindingIndex;
+  };
 
   const walk = (
     node: Node,
@@ -168,7 +208,8 @@ export const collectProcessorUsages = (
       const callee = node.tag as Expression;
       const resolvedProcessor = resolveDefinedProcessor(
         callee,
-        definedProcessors
+        definedProcessors,
+        getBindingIndex
       );
       if (resolvedProcessor) {
         usages.push({
@@ -188,7 +229,8 @@ export const collectProcessorUsages = (
       const { callee } = node as CallExpressionLike;
       const resolvedProcessor = resolveDefinedProcessor(
         callee,
-        definedProcessors
+        definedProcessors,
+        getBindingIndex
       );
       if (resolvedProcessor) {
         usages.push({

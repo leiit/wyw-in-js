@@ -922,6 +922,39 @@ describe('applyOxcProcessors', () => {
     });
   });
 
+  it('ignores calls to local bindings that shadow the processor import', () => {
+    const result = applyOxcProcessors(
+      `
+        import { styled as a } from '@linaria/react';
+
+        export const Box = a.div\`
+          color: red;
+        \`;
+
+        export const render = (items, format) => {
+          const { a } = { a: format };
+          return items.map((e) => a(e));
+        };
+      `,
+      fileContext,
+      {
+        displayName: false,
+        extensions: ['.js', '.ts', '.tsx'],
+        tagResolver: (source, imported) => {
+          if (source === '@linaria/react' && imported === 'styled') {
+            return linariaStyledProcessorPath;
+          }
+
+          return null;
+        },
+      },
+      () => {}
+    );
+
+    expect(result.processors).toHaveLength(1);
+    expect(result.code).toContain('a(e)');
+  });
+
   it('keeps helper declarations that remain referenced by surviving runtime dependency chains', () => {
     const result = applyOxcProcessors(
       `
