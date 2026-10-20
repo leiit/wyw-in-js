@@ -5,14 +5,16 @@ type LoopNode = {
 
 export function hasLoop(name: string, parent: LoopNode): boolean {
   const onPath = new Set<string>();
-  const explored = new Set<string>();
+  // Explored nodes, not names: the generations of a module share its name but
+  // not its parents. Each node's parents are still walked once.
+  const explored = new Set<LoopNode>();
 
   const visit = (node: LoopNode): boolean => {
     if (node.name === name || onPath.has(node.name)) {
       return true;
     }
 
-    if (explored.has(node.name)) {
+    if (explored.has(node)) {
       return false;
     }
 
@@ -24,7 +26,7 @@ export function hasLoop(name: string, parent: LoopNode): boolean {
     }
 
     onPath.delete(node.name);
-    explored.add(node.name);
+    explored.add(node);
     return false;
   };
 

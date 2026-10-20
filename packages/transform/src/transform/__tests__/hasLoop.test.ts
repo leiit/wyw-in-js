@@ -1,4 +1,4 @@
-import { hasLoop } from '../transform/hasLoop';
+import { hasLoop } from '../hasLoop';
 
 type Node = { name: string; parents: Node[] };
 
@@ -41,19 +41,44 @@ describe('hasLoop', () => {
     expect(hasLoop('target', node('leaf', [left, right]))).toBe(true);
   });
 
-  it('walks a graph with many shared ancestors in linear time', () => {
-    let layer = [node('root-0'), node('root-1')];
-    for (let depth = 0; depth < 40; depth += 1) {
+  it('follows every generation of a module that shares a name', () => {
+    const target = node('target');
+    const first = node('x');
+    const second = node('x', [target]);
+
+    expect(
+      hasLoop('target', node('leaf', [node('c', [first]), node('d', [second])]))
+    ).toBe(true);
+  });
+
+  it('reads the parents of every ancestor once', () => {
+    // A ladder: every node of a layer has both nodes of the layer below as
+    // parents, so a walk of every path reads each ladder node 2^depth times.
+    const read = new Set<Node>();
+    const counted = (name: string, parents: Node[] = []): Node => {
+      const result = { name } as Node;
+      Object.defineProperty(result, 'parents', {
+        get() {
+          if (read.has(result)) {
+            throw new Error(`the parents of ${name} were read twice`);
+          }
+
+          read.add(result);
+          return parents;
+        },
+      });
+      return result;
+    };
+
+    let layer = [counted('root-0'), counted('root-1')];
+    for (let depth = 0; depth < 20; depth += 1) {
       layer = [
-        node(`layer-${depth}-0`, layer),
-        node(`layer-${depth}-1`, layer),
+        counted(`layer-${depth}-0`, layer),
+        counted(`layer-${depth}-1`, layer),
       ];
     }
 
-    const startedAt = Date.now();
-    const result = hasLoop('missing', node('leaf', layer));
-
-    expect(result).toBe(false);
-    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(hasLoop('missing', counted('leaf', layer))).toBe(false);
+    expect(read.size).toBe(43);
   });
 });
