@@ -587,6 +587,20 @@ const buildProgramScopeFacts = (
   });
 };
 
+// The binding index alone, without the mutation analysis of analyzeProgram.
+// It is cached with the program, so a later analyzeProgram reuses it.
+export const getProgramBindingIndex = (
+  program: Program
+): ProgramAnalysis['bindingIndex'] => {
+  let scopeFacts = programScopeFacts.get(program);
+  if (!scopeFacts) {
+    scopeFacts = buildProgramScopeFacts(program);
+    programScopeFacts.set(program, scopeFacts);
+  }
+
+  return scopeFacts.bindingIndex;
+};
+
 export const analyzeProgram = (
   program: Program,
   options: AnalyzeProgramOptions = {}

@@ -7,9 +7,11 @@ import type {
 } from 'oxc-parser';
 
 import { resolveBindingInIndex } from '../collectOxcTemplateDependencies/bindingResolution';
-import { analyzeProgram } from '../collectOxcTemplateDependencies/scopeAnalysis';
-import type { BindingIndex } from '../collectOxcTemplateDependencies/types';
+import { getProgramBindingIndex } from '../collectOxcTemplateDependencies/scopeAnalysis';
+import type { Binding } from '../collectOxcTemplateDependencies/types';
 import { getOxcNodeChildren } from '../oxc/ast';
+import { collectOxcPatternBindingNames } from '../oxc/patterns';
+import { isOxcFunctionLike } from '../oxc/runtimeSemantics';
 import type {
   CallExpressionLike,
   DefinedProcessor,
@@ -92,25 +94,7 @@ export const getQualifiedName = (node: Expression): string | null => {
   return null;
 };
 
-// A parameter or local variable can shadow the imported processor name
-const isShadowedByLocalBinding = (
-  callee: Expression,
-  getBindingIndex: (() => BindingIndex) | undefined
-): boolean => {
-  const root = getRootIdentifier(callee);
-  if (!root || !getBindingIndex) {
-    return false;
-  }
-
-  const binding = resolveBindingInIndex(
-    getBindingIndex(),
-    root.name,
-    root.start
-  );
-  return binding !== undefined && !binding.isRoot && binding.kind !== 'import';
-};
-
-const matchDefinedProcessor = (
+export const resolveDefinedProcessor = (
   callee: Expression,
   definedProcessors: Map<string, DefinedProcessor>
 ): {
@@ -139,20 +123,6 @@ const matchDefinedProcessor = (
         collapseQualifiedCallee: false,
         definedProcessor,
       }
-    : null;
-};
-
-export const resolveDefinedProcessor = (
-  callee: Expression,
-  definedProcessors: Map<string, DefinedProcessor>,
-  getBindingIndex?: () => BindingIndex
-): {
-  collapseQualifiedCallee: boolean;
-  definedProcessor: DefinedProcessor;
-} | null => {
-  const resolved = matchDefinedProcessor(callee, definedProcessors);
-  return resolved && !isShadowedByLocalBinding(callee, getBindingIndex)
-    ? resolved
     : null;
 };
 
@@ -188,28 +158,115 @@ export const expandReplacementTarget = (
   return current;
 };
 
+// Start offsets of the local identifiers that declare processors, keyed by the
+// root name usages refer to them with (`styled`, or `react` for `react.styled`).
+export type ProcessorDeclarations = Map<string, number[]>;
+
+export const addProcessorDeclaration = (
+  declarations: ProcessorDeclarations,
+  local: string,
+  start: number
+): void => {
+  const root = local.split('.')[0]!;
+  const starts = declarations.get(root);
+  if (starts) {
+    starts.push(start);
+  } else {
+    declarations.set(root, [start]);
+  }
+};
+
+const getDeclaredPatterns = (node: Node): Node[] => {
+  if (isOxcFunctionLike(node)) {
+    return node.id ? [node.id as unknown as Node, ...node.params] : node.params;
+  }
+
+  if (
+    (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') &&
+    node.id
+  ) {
+    return [node.id];
+  }
+
+  if (node.type === 'CatchClause' && node.param) {
+    return [node.param];
+  }
+
+  return node.type === 'VariableDeclarator' ? [node.id] : [];
+};
+
+// Whether the node declares the name of a processor other than through that
+// processor's own declaration, so a usage of the name may mean another binding.
+const redeclaresProcessorName = (
+  node: Node,
+  declarations: ProcessorDeclarations
+): boolean =>
+  getDeclaredPatterns(node).some((pattern) =>
+    collectOxcPatternBindingNames(pattern).some((name) => {
+      const starts = declarations.get(name);
+      return (
+        starts !== undefined &&
+        !starts.some((start) => pattern.start <= start && start < pattern.end)
+      );
+    })
+  );
+
+// Usages are found by name, but a local binding can reuse the name of a
+// processor (minifiers pick short names per scope). Keep the usages whose name
+// resolves to a binding that declares a processor.
+const withoutShadowedUsages = (
+  program: Program,
+  usages: ProcessorUsage[],
+  declarations: ProcessorDeclarations
+): ProcessorUsage[] => {
+  const index = getProgramBindingIndex(program);
+  const processorBindings = new Set<Binding>();
+  declarations.forEach((starts, name) => {
+    starts.forEach((start) => {
+      const binding = resolveBindingInIndex(index, name, start);
+      if (binding) {
+        processorBindings.add(binding);
+      }
+    });
+  });
+
+  return usages.filter((usage) => {
+    const root = getRootIdentifier(usage.callee);
+    if (!root || !declarations.has(root.name)) {
+      return true;
+    }
+
+    const binding = resolveBindingInIndex(index, root.name, root.start);
+    return (
+      binding === undefined ||
+      binding.kind === 'import' ||
+      processorBindings.has(binding)
+    );
+  });
+};
+
 export const collectProcessorUsages = (
   program: Program,
-  definedProcessors: Map<string, DefinedProcessor>
+  definedProcessors: Map<string, DefinedProcessor>,
+  declarations: ProcessorDeclarations = new Map()
 ): ProcessorUsage[] => {
   const usages: ProcessorUsage[] = [];
-  let bindingIndex: BindingIndex | undefined;
-  const getBindingIndex = () => {
-    bindingIndex ??= analyzeProgram(program).bindingIndex;
-    return bindingIndex;
-  };
+  let mayBeShadowed = false;
 
   const walk = (
     node: Node,
     ancestors: Node[],
     parent: Node | null = null
   ): void => {
+    if (!mayBeShadowed && declarations.size > 0) {
+      mayBeShadowed = redeclaresProcessorName(node, declarations);
+    }
+
     if (node.type === 'TaggedTemplateExpression') {
       const callee = node.tag as Expression;
       const resolvedProcessor = resolveDefinedProcessor(
         callee,
-        definedProcessors,
-        getBindingIndex
+        definedProcessors
       );
       if (resolvedProcessor) {
         usages.push({
@@ -229,8 +286,7 @@ export const collectProcessorUsages = (
       const { callee } = node as CallExpressionLike;
       const resolvedProcessor = resolveDefinedProcessor(
         callee,
-        definedProcessors,
-        getBindingIndex
+        definedProcessors
       );
       if (resolvedProcessor) {
         usages.push({
@@ -255,7 +311,11 @@ export const collectProcessorUsages = (
 
   walk(program, []);
 
-  return usages.sort((a, b) => a.target.start - b.target.start);
+  return (
+    mayBeShadowed
+      ? withoutShadowedUsages(program, usages, declarations)
+      : usages
+  ).sort((a, b) => a.target.start - b.target.start);
 };
 
 export const expressionSpan = (expression: Expression): ExpressionSpan => ({

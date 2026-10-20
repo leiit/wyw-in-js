@@ -14,9 +14,11 @@ import { isProcessorStaticValue } from '../../utils/processorStaticSemantics';
 import type { IPreevalResult } from '../Entrypoint.types';
 import { getDisplayName } from '../../utils/applyOxcProcessors/displayName';
 import {
+  addProcessorDeclaration,
   collectProcessorUsages,
   collectUsageExpressionSpans,
   getRootIdentifier,
+  type ProcessorDeclarations,
 } from '../../utils/applyOxcProcessors/processorUsages';
 import { parseOxc } from '../../utils/applyOxcProcessors/shared';
 import type {
@@ -38,6 +40,8 @@ import {
 export type StaticPlanProcessorImport = {
   imported: string;
   local: string;
+  // Where `local` is declared; without it, usages are matched by name only.
+  localStart?: number;
   semantics?: DeclarativeProcessorSemantics | null;
   source: string;
 };
@@ -120,6 +124,7 @@ const discoverProcessorImports = ({
     processorImports.push({
       imported: tagSource.imported,
       local,
+      localStart: item.local.start,
       semantics: normalizeDeclarativeProcessorSemantics(
         manifest?.semantics,
         manifest?.dir
@@ -166,6 +171,19 @@ const createDefinedProcessors = (
   });
 
   return definedProcessors;
+};
+
+const createProcessorDeclarations = (
+  processorImports: StaticPlanProcessorImport[]
+): ProcessorDeclarations => {
+  const declarations: ProcessorDeclarations = new Map();
+  processorImports.forEach((item) => {
+    if (item.localStart !== undefined) {
+      addProcessorDeclaration(declarations, item.local, item.localStart);
+    }
+  });
+
+  return declarations;
 };
 
 const getUsageLocal = (usage: ProcessorUsage): string => {
@@ -228,7 +246,8 @@ export const buildStaticPlan = ({
   const program = parseOxc(code, filename);
   const usages = collectProcessorUsages(
     program,
-    createDefinedProcessors(processorImports)
+    createDefinedProcessors(processorImports),
+    createProcessorDeclarations(processorImports)
   );
   const targetExpressionSpans = usages.flatMap(collectUsageExpressionSpans);
   const emptyExtraction = {
