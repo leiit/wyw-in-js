@@ -44,8 +44,10 @@ import { buildParams } from './expressionValues';
 import { usesStaticEvaluation } from '../evalStrategy';
 import { createProcessor } from './processorFactory';
 import {
+  addProcessorDeclaration,
   collectProcessorUsages,
   collectUsageExpressionSpans,
+  type ProcessorDeclarations,
 } from './processorUsages';
 import { removeUnusedAfterReplacement } from './cleanup-after-replacement';
 import { insertAddedImports, parseOxc } from './shared';
@@ -167,6 +169,7 @@ export const applyOxcProcessors = (
   const buildUnprocessedCode = () =>
     applyOxcEdits(workingCode, getEvaltimeCodePlan().replacements);
   const definedProcessors = new Map<string, DefinedProcessor>();
+  const processorDeclarations: ProcessorDeclarations = new Map();
   const removableImportLocals = new Set(
     reusablePlan?.removableImportLocals ?? []
   );
@@ -214,6 +217,11 @@ export const applyOxcProcessors = (
                 ),
               },
             ]);
+            addProcessorDeclaration(
+              processorDeclarations,
+              localName,
+              item.local.start
+            );
             removableImportLocals.add(localName);
             const rootLocalName = localName.split('.')[0];
             if (rootLocalName) {
@@ -252,7 +260,7 @@ export const applyOxcProcessors = (
   const processorUsages =
     reusablePlan?.processorUsages ??
     eventEmitter.perf(perfLabel('usages'), () =>
-      collectProcessorUsages(program, definedProcessors)
+      collectProcessorUsages(program, definedProcessors, processorDeclarations)
     );
   if (pipelineTelemetryEnabled) {
     recordPipelineProcessors(

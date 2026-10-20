@@ -922,6 +922,117 @@ describe('applyOxcProcessors', () => {
     });
   });
 
+  it('ignores calls to local bindings that shadow the processor import', () => {
+    const result = applyOxcProcessors(
+      `
+        import { styled as a } from '@linaria/react';
+
+        export const Box = a.div\`
+          color: red;
+        \`;
+
+        export const render = (items, format) => {
+          const { a } = { a: format };
+          return items.map((e) => a(e));
+        };
+      `,
+      fileContext,
+      {
+        displayName: false,
+        extensions: ['.js', '.ts', '.tsx'],
+        tagResolver: (source, imported) => {
+          if (source === '@linaria/react' && imported === 'styled') {
+            return linariaStyledProcessorPath;
+          }
+
+          return null;
+        },
+      },
+      () => {}
+    );
+
+    expect(result.processors).toHaveLength(1);
+    expect(result.code).toContain('a(e)');
+  });
+
+  describe('processors required inside a function', () => {
+    const applyLinariaStyled = (code: string) =>
+      applyOxcProcessors(
+        code,
+        fileContext,
+        {
+          displayName: false,
+          extensions: ['.js', '.ts', '.tsx'],
+          tagResolver: (source, imported) =>
+            source === '@linaria/react' && imported === 'styled'
+              ? linariaStyledProcessorPath
+              : null,
+        },
+        () => {}
+      );
+
+    it('are processed', () => {
+      const result = applyLinariaStyled(`
+        export function make() {
+          const { styled } = require('@linaria/react');
+          return styled.div\`
+            color: red;
+          \`;
+        }
+      `);
+
+      expect(result.processors).toHaveLength(1);
+    });
+
+    it('are processed through a namespace binding', () => {
+      const result = applyLinariaStyled(`
+        export function make() {
+          const react = require('@linaria/react');
+          return react.styled('div')\`
+            color: red;
+          \`;
+        }
+      `);
+
+      expect(result.processors).toHaveLength(1);
+    });
+
+    it('are processed in every function that requires them', () => {
+      const result = applyLinariaStyled(`
+        export function makeRed() {
+          const { styled } = require('@linaria/react');
+          return styled.div\`
+            color: red;
+          \`;
+        }
+
+        export function makeBlue() {
+          const { styled } = require('@linaria/react');
+          return styled.div\`
+            color: blue;
+          \`;
+        }
+      `);
+
+      expect(result.processors).toHaveLength(2);
+    });
+
+    it('are not matched by an inner parameter of the same name', () => {
+      const result = applyLinariaStyled(`
+        export function make(items) {
+          const { styled } = require('@linaria/react');
+          const Box = styled.div\`
+            color: red;
+          \`;
+          return items.map((styled) => styled(Box));
+        }
+      `);
+
+      expect(result.processors).toHaveLength(1);
+      expect(result.code).toContain('styled(Box)');
+    });
+  });
+
   it('keeps helper declarations that remain referenced by surviving runtime dependency chains', () => {
     const result = applyOxcProcessors(
       `
