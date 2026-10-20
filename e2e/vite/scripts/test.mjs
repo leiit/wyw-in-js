@@ -295,6 +295,37 @@ async function runReexportedValueCase() {
   }
 }
 
+async function runShadowedProcessorCase() {
+  const outDir = path.resolve(PKG_DIR, 'dist-shadowed-processor');
+
+  try {
+    await fs.rm(outDir, { recursive: true, force: true });
+    await build({
+      build: {
+        cssMinify: false,
+        outDir,
+        rollupOptions: {
+          input: path.resolve(PKG_DIR, 'src/shadowed-processor/index.js'),
+        },
+      },
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [wyw()],
+      root: PKG_DIR,
+    });
+
+    const cssFile = await findFileMatching(outDir, (filePath) =>
+      filePath.endsWith('.css')
+    );
+    const css = normalizeLineEndings(await fs.readFile(cssFile, 'utf-8'));
+    if (!/color:\s*shadowed-red/.test(css)) {
+      throw new Error(`Expected the title rule in the CSS, got:\n${css}`);
+    }
+  } finally {
+    await fs.rm(outDir, { recursive: true, force: true });
+  }
+}
+
 async function assertFileMatches(filePath, pattern) {
   const contents = normalizeLineEndings(await fs.readFile(filePath, 'utf-8'));
 
@@ -479,6 +510,9 @@ const main = async () => {
 
   console.log(colors.blue('Running case:'), 'reexportedValue');
   await runReexportedValueCase();
+
+  console.log(colors.blue('Running case:'), 'shadowedProcessor');
+  await runShadowedProcessorCase();
 
   console.log(colors.blue('Running case:'), 'loadedCode');
   await assertLoadedCode(PKG_DIR);
