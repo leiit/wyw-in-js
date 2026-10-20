@@ -60,6 +60,11 @@ export interface EntrypointInit {
 export interface EntrypointFactory {
   deferOnlySupersede(entrypoint: Entrypoint, only: string[]): void;
   failInvalidation(entrypoint: Entrypoint, error: Error): void;
+  /**
+   * The entrypoint an evaluated copy was created from, while a running
+   * transform uses it and it is neither superseded nor invalidated.
+   */
+  getActiveSource(publication: IEvaluatedEntrypoint): Entrypoint | null;
   instantiate(init: EntrypointInit): Entrypoint;
   isEntrypoint(parent: ParentEntrypoint | null): parent is Entrypoint;
   isProcessing(entrypoint: Entrypoint): boolean;
@@ -397,6 +402,26 @@ function innerCreateEntrypoint(
       expectedCached,
       false,
     ];
+  }
+
+  // An eval publishes an evaluated copy of every module it loads, and the
+  // copy stands for its source (Entrypoint.isPublishedAs). While a running
+  // transform uses that source, a request the source covers is served by the
+  // source, as before the copy was published. A new entrypoint would replace
+  // the copy without a link to the source and abort the source's transform.
+  // A request that closes an import cycle through the source keeps the previous
+  // behavior: its `loop` status would publish the source in place of the copy
+  // that the evals which published it still expect.
+  if (reusableEvaluatedState && cached === expectedCached) {
+    const source = factory.getActiveSource(cached);
+    if (
+      source &&
+      isSuperSet(source.only, mergedOnly) &&
+      !(parent && hasLoop(name, parent))
+    ) {
+      source.log('is cached as its evaluated copy', name);
+      return ['cached', source, expectedCached, false];
+    }
   }
 
   if (!recoveredFromUnknownGraph && !changed && cached && !cached.evaluated) {
